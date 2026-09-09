@@ -1,0 +1,67 @@
+# nut-snmp alongside an existing PeaNUT deployment.
+#
+# This is its own compose project: PeaNUT's compose file is not touched. Only
+# nut-server joins PeaNUT's network, and it is the only service PeaNUT talks to
+# -- every UPS in config/ups.conf appears behind it, so PeaNUT gains exactly one
+# NUT_SERVERS entry no matter how many UPSes you add.
+#
+# Before first use:
+#   1. cp .env.example .env            and set NUT_PASSWORD
+#   2. cp config/ups.conf.example config/ups.conf   and fill in your UPSes
+#   3. find PeaNUT's network name and set it under networks.peanut.name below:
+#        docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' peanut
+#   4. add the NUT_SERVERS entry from the README to PeaNUT's settings.yml
+
+services:
+  nut-server:
+    image: ghcr.io/sethdotfm/nut-snmp:latest
+    container_name: nut-server
+    command: server
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - nut-run:/run/nut
+      - ./config/ups.conf:/etc/nut/ups.conf:ro
+    networks:
+      - internal
+      - peanut
+
+  # One driver service per UPS. They differ only in the name passed to the
+  # driver, which must match a section in config/ups.conf.
+  #
+  # The drivers do not join PeaNUT's network: they reach their UPSes by ordinary
+  # LAN egress and reach upsd through the shared socket volume, so there is no
+  # reason for them to be adjacent to PeaNUT.
+  nut-apc:
+    image: ghcr.io/sethdotfm/nut-snmp:latest
+    container_name: nut-apc
+    command: ["driver", "apc-rack"]
+    restart: unless-stopped
+    volumes:
+      - nut-run:/run/nut
+      - ./config/ups.conf:/etc/nut/ups.conf:ro
+    networks:
+      - internal
+
+  nut-eaton:
+    image: ghcr.io/sethdotfm/nut-snmp:latest
+    container_name: nut-eaton
+    command: ["driver", "eaton-closet"]
+    restart: unless-stopped
+    volumes:
+      - nut-run:/run/nut
+      - ./config/ups.conf:/etc/nut/ups.conf:ro
+    networks:
+      - internal
+
+volumes:
+  # Carries the driver state sockets between the driver containers and upsd.
+  nut-run:
+
+networks:
+  internal:
+  peanut:
+    external: true
+    # Replace with PeaNUT's actual network. A compose-managed one is usually
+    # <project-directory>_default.
+    name: peanut_default

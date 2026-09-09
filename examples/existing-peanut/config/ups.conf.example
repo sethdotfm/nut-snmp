@@ -1,0 +1,44 @@
+# Copy to ups.conf and edit. This file is the source of truth for every UPS in
+# the stack -- both upsd and each driver container read it, mounted read-only.
+#
+# It holds SNMP community strings in plaintext, so ups.conf is gitignored;
+# only this example is committed.
+#
+# Every section name here needs a matching driver service in docker-compose.yml
+# (command: ["driver", "<section-name>"]).
+
+[apc-rack]
+    driver = snmp-ups
+    port = 192.168.1.50
+    community = public
+    snmp_version = v2c
+    # Start with auto -- it matches on the device's sysObjectID. Once the UPS is
+    # up, run `upsc apc-rack@127.0.0.1 ups.mfr` and pin the MIB it resolved to,
+    # so a firmware update cannot quietly shift the detection.
+    # `upsc` output that is oddly sparse usually means auto guessed wrong; run
+    # `/usr/lib/nut/snmp-ups -a apc-rack -DD` inside the container to see why.
+    mibs = auto
+    pollfreq = 30
+    desc = "APC rack UPS"
+
+[eaton-closet]
+    driver = snmp-ups
+    port = 192.168.1.51
+    community = public
+    snmp_version = v2c
+    mibs = auto
+    desc = "Eaton closet UPS"
+
+# SNMPv3 instead of a community string:
+#
+# [secure-ups]
+#     driver = snmp-ups
+#     port = 192.168.1.52
+#     snmp_version = v3
+#     secLevel = authPriv
+#     secName = monitor
+#     authProtocol = SHA256
+#     authPassword = ...
+#     privProtocol = AES
+#     privPassword = ...
+#     mibs = auto

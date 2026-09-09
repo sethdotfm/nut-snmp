@@ -1,0 +1,4 @@
+# Holds SNMP community strings and device addresses.
+examples/existing-peanut/config/ups.conf
+.env
+**/.env

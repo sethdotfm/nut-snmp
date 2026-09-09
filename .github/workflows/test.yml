@@ -1,0 +1,40 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lint the shell scripts
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck --shell=sh entrypoint.sh healthcheck.sh lib/render-config.sh
+          shellcheck --shell=bash tests/smoke.sh
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Native amd64 only: these tests exercise the scripts, not the target
+      # architecture, and the multi-arch build is covered by build.yml.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: nut-snmp:dev
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Config rendering
+        run: |
+          docker run --rm -v "$PWD/tests:/tests:ro" nut-snmp:dev \
+            sh /tests/render-config.test.sh
+
+      - name: End-to-end
+        run: ./tests/smoke.sh nut-snmp:dev

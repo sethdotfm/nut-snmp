@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Bumps the alpine tag in the Dockerfile when a new stable release lands. The
+  # weekly rebuild in build.yml covers patch-level security fixes between these.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
