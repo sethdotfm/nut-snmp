@@ -206,4 +206,8 @@ docker run --rm -v "$PWD/tests:/tests:ro" nut-snmp:dev sh /tests/render-config.t
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Public domain, via [the Unlicense](LICENSE). Do whatever you want with it; no
+attribution required.
+
+NUT itself is GPL-2.0-or-later and is installed from Alpine's package, not
+vendored here.
