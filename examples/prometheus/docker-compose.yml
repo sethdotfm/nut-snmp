@@ -11,6 +11,9 @@
 #   3. set networks.metrics.name to Prometheus's own network:
 #        docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' prometheus
 #   4. add the scrape job from prometheus-scrape.yml to your Prometheus config
+#   5. add prometheus-rules.yml to Prometheus's rule_files -- the per-phase
+#      dashboard panels query the series it records
+#   6. mount grafana/ into Grafana; see the README
 
 services:
   nut-server:

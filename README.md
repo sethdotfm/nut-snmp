@@ -331,6 +331,10 @@ into a metric, so `output.L1.power.percent` becomes
 
 Both can run at once. They are just two NUT clients.
 
+That example also carries the Grafana half: recording rules that fold the
+per-phase metric names into one series with a `phase` label, and two provisioned
+dashboards — a KPI row that repeats over every UPS, and a per-UPS detail view.
+
 ## Development
 
 ```bash
