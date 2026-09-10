@@ -27,8 +27,9 @@ resolve_secret() {
     eval "_cur=\${${_var}:-}"
     [ -z "$_cur" ] || log "warning: both $_var and ${_var}_FILE are set; using ${_var}_FILE"
     _val="$(cat "$_file")"
+    # This script is exec'd standalone, so the value only has to survive until
+    # the render functions below read it -- no export needed.
     eval "${_var}=\$_val"
-    export "$_var"
 }
 
 # emit_opt <key> <value> — skip silently when the value is empty, so NUT's own
