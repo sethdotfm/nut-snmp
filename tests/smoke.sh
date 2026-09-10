@@ -18,7 +18,12 @@ CONFIG="$(mktemp -d)"
 
 cleanup() {
     docker rm -f "$DRIVER" "$SERVER" >/dev/null 2>&1 || true
-    docker volume rm "$VOLUME" >/dev/null 2>&1 || true
+    # Removal can race the containers actually going away, which leaks the
+    # volume; retry briefly rather than leaving one behind.
+    for _ in 1 2 3 4 5; do
+        docker volume rm "$VOLUME" >/dev/null 2>&1 && break
+        sleep 1
+    done
     rm -rf "$CONFIG"
 }
 trap cleanup EXIT
@@ -45,8 +50,11 @@ cat > "$CONFIG/ups.conf" <<SEQCONF
     desc = "smoke test"
 SEQCONF
 
+# Docker needs interval*retries (30s * 3) plus NUT's MAXAGE (15s) to call a
+# stopped driver stale, so the unhealthy transition needs real patience -- a
+# tight deadline here just makes the test flaky.
 wait_for_health() {
-    local container="$1" want="$2" deadline=$((SECONDS + 90))
+    local container="$1" want="$2" deadline=$((SECONDS + ${3:-120}))
     while [ "$SECONDS" -lt "$deadline" ]; do
         local state
         state="$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || echo missing)"
@@ -58,6 +66,13 @@ wait_for_health() {
     docker logs "$container" >&2 || true
     return 1
 }
+
+# The Alpine package ships sample configs into /etc/nut. If they ever come back,
+# every "did the operator mount this?" check in the entrypoint silently inverts,
+# so guard the image itself before testing any behaviour built on top of it.
+leftovers="$(docker run --rm --entrypoint sh "$IMAGE" -c 'ls -A /etc/nut 2>/dev/null || true')"
+[ -z "$leftovers" ] || fail "the image ships config in /etc/nut: $leftovers"
+echo "ok   - /etc/nut ships empty"
 
 docker volume create "$VOLUME" >/dev/null
 
@@ -100,7 +115,7 @@ echo "ok   - upsd.users rendered next to a mounted ups.conf"
 
 echo "== killing the driver; the server must notice"
 docker rm -f "$DRIVER" >/dev/null
-wait_for_health "$SERVER" unhealthy || fail "server stayed healthy after the driver died"
+wait_for_health "$SERVER" unhealthy 240 || fail "server stayed healthy after the driver died"
 
 output="$(docker inspect -f '{{range .State.Health.Log}}{{.Output}}{{end}}' "$SERVER")"
 grep -q "$UPS" <<<"$output" || fail "the health output does not name the failing UPS"
