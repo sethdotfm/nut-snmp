@@ -27,23 +27,42 @@ case "$role" in
         ;;
 
     server)
-        if ! list="$(upsc -l "$HEALTHCHECK_HOST:$PORT" 2>&1)"; then
-            echo "upsd not answering on $HEALTHCHECK_HOST:$PORT: $list"
+        # upsc writes "Init SSL without certificate database" to stderr on every
+        # invocation. Merging it into stdout would feed that banner to the loop
+        # below as if it were a list of UPS names, so the streams stay separate
+        # and stderr is kept only for the diagnostic.
+        err="$(mktemp)"
+        trap 'rm -f "$err"' EXIT
+
+        if ! list="$(upsc -l "$HEALTHCHECK_HOST:$PORT" 2>"$err")"; then
+            echo "upsd not answering on $HEALTHCHECK_HOST:$PORT: $(tr '\n' ' ' < "$err")"
             exit 1
         fi
         [ -n "$list" ] || { echo "upsd has no UPS definitions"; exit 1; }
 
         rc=0
+        checked=""
+        # Split on newlines only: a UPS name is a whole line, and a stray
+        # sentence on stdout should be skipped rather than split into words.
+        IFS='
+'
         for ups in $list; do
-            if ! out="$(upsc "$ups@$HEALTHCHECK_HOST:$PORT" ups.status 2>&1)"; then
+            case "$ups" in
+                ''|*[!A-Za-z0-9._-]*) continue ;;   # not a UPS name
+            esac
+            if ! upsc "$ups@$HEALTHCHECK_HOST:$PORT" ups.status >/dev/null 2>"$err"; then
                 # Name the UPS: with several devices behind one upsd, "unhealthy"
                 # is useless unless it says which one. docker inspect surfaces
                 # this in .State.Health.Log[].Output.
-                echo "stale or unreachable: $ups ($out)"
+                echo "stale or unreachable: $ups ($(tr '\n' ' ' < "$err"))"
                 rc=1
             fi
+            checked="$checked $ups"
         done
-        [ "$rc" = 0 ] && echo "server ok: $(echo "$list" | tr '\n' ' ')"
+        unset IFS
+
+        [ -n "$checked" ] || { echo "upsd listed no usable UPS names"; exit 1; }
+        [ "$rc" = 0 ] && echo "server ok:$checked"
         exit "$rc"
         ;;
 
