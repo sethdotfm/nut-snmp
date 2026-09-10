@@ -1,0 +1,41 @@
+# Copy to ups.conf and edit. Both upsd and the driver container read this file,
+# mounted read-only. It holds SNMPv3 passwords in plaintext, so ups.conf is
+# gitignored; only this example is committed.
+#
+# The section name must match the driver service's command in
+# docker-compose.yml (command: ["driver", "<section-name>"]).
+#
+# This example is a three-phase Schneider Electric Easy UPS 3S behind a
+# Phoenixtec card. See "Choosing a MIB" in the README for how each value here
+# was arrived at -- in particular why it is mibs = ietf and not mibs = xppc.
+
+[sr1-1]
+    driver = snmp-ups
+    port = 172.17.50.121
+
+    # This card offers no SNMPv1/v2c access rows at all, so v1 and v2c queries
+    # are dropped with no reply. Check the card's access-control table before
+    # assuming a timeout means the wrong community.
+    snmp_version = v3
+    secLevel = authPriv
+    secName = nutmon
+    authProtocol = SHA
+    authPassword = change-me
+    privProtocol = AES
+    privPassword = change-me
+
+    # Pinned, not auto: this card's sysObjectID (.1.3.6.1.4.1.935.1.1.1) fails
+    # to match anything under mibs = auto. ietf rather than the vendor's xppc
+    # because the card implements RFC 1628 in full -- which is what supplies
+    # battery.runtime and the per-phase tables that xppc has no mapping for.
+    mibs = ietf
+
+    pollfreq = 30
+    snmp_timeout = 3
+    snmp_retries = 5
+    desc = "Server Room 1 Primary UPS"
+
+    # This card reports its serial in upsIdentManufacturer, which NUT maps to
+    # ups.mfr. override. accepts any NUT variable.
+    override.ups.mfr = "Schneider Electric"
+    override.ups.serial = "change-me"

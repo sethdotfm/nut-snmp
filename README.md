@@ -66,7 +66,7 @@ environment variables.
 | `LISTEN_ADDR` | `0.0.0.0` | `upsd.conf` `LISTEN` address |
 | `LISTEN_PORT` | `3493` | `upsd.conf` `LISTEN` port |
 | `MAXAGE` | *NUT default (15)* | Seconds before unrefreshed data is called stale |
-| `STATEPATH` | `/run/nut` | Where driver sockets live |
+| `STATEPATH` | `/run/nut` | Where driver sockets live. Exported to NUT as `NUT_STATEPATH`, which is the variable NUT itself reads |
 
 The generated user gets the `upsmon secondary` role (NUT 2.8 spelling; `slave`
 is the deprecated equivalent).
@@ -138,16 +138,139 @@ If you bind `LISTEN_ADDR` to something other than `0.0.0.0`, set
 - **A driver that restarts in a loop means the UPS is unreachable.** `snmp-ups`
   exits if it cannot reach the device at startup; Docker's restart backoff
   retries. Check the address, community string, and that UDP/161 is open.
-- **`mibs = auto` is a starting point, not a destination.** It matches on the
-  device's `sysObjectID`. Once the UPS connects, check `upsc <name>@127.0.0.1
-  ups.mfr` and pin the MIB it resolved to, so a firmware update cannot shift the
-  detection under you. `/usr/lib/nut/snmp-ups -a <name> -DD` inside the
-  container shows the negotiation; `mibs=--list` prints the candidates.
+- **`mibs = auto` is a starting point, not a destination**, and sometimes not
+  even that: it matches on the device's `sysObjectID`, and a device whose OID
+  sits *below* a MIB's registered prefix can fail to match at all. Pin the MIB
+  once you know it. See [Choosing a MIB](#choosing-a-mib).
 - **This cannot shut down your host.** A container has no way to halt the
   machine it runs on. Hosts that need to power down on low battery still need
   their own `upsmon` client pointed at this server's port 3493.
-- SNMP community strings sit in plaintext in `ups.conf`. Keep it `0640` and out
-  of version control.
+- SNMP community strings and SNMPv3 passwords sit in plaintext in `ups.conf`.
+  Keep it `0640` and out of version control. NUT parses the file before it drops
+  privileges, so the container's default root user reads a `0640` file that the
+  `nut` uid could not — but if you run the container with a non-root `user:`,
+  the mounted file has to be readable by *that* uid, since nothing runs as root
+  to read it first.
+
+## Choosing a MIB
+
+`mibs = auto` asks `snmp-ups` to read the device's `sysObjectID` and match it
+against every MIB it ships. That works often enough to be the default and badly
+enough to be worth understanding.
+
+Angle-bracket placeholders are left out of the commands below on purpose: `<`
+is shell redirection, so pasting one unedited fails with a syntax error rather
+than a useful message. Set these once and the rest copy cleanly.
+
+Find out what your device claims to be:
+
+```bash
+NET=nut-snmp_internal      # the driver container's docker network
+IP=192.168.1.50
+COMMUNITY=public
+
+docker run --rm --network "$NET" alpine sh -c \
+  "apk add -q net-snmp-tools && snmpwalk -v2c -c $COMMUNITY $IP 1.3.6.1.2.1.1"
+```
+
+`sysObjectID` is the value that drives detection. If `auto` fails — the driver
+exits with `No supported device detected` and Docker restarts it in a loop — pin
+the MIB by hand and re-run the driver in the foreground to watch it load:
+
+```bash
+UPS=sr1-1                  # the section name in ups.conf
+
+docker compose stop "nut-$UPS"
+docker run --rm --network "$NET" \
+  -v "$PWD/config/ups.conf:/etc/nut/ups.conf:ro" \
+  ghcr.io/sethdotfm/nut-snmp:latest \
+  sh -c "mkdir -p /run/nut && timeout 45 /usr/lib/nut/snmp-ups -a $UPS -DDD 2>&1 | grep -v 'skip the'"
+```
+
+Stop the running driver first — two instances race for the same state socket.
+`timeout` matters too: a driver that loads successfully enters its main loop and
+never exits on its own.
+
+A successful load prints `Detected MODEL on host IP (mib: NAME VERSION)`. To see
+every MIB the binary knows:
+
+```bash
+docker run --rm -v "$PWD/config/ups.conf:/etc/nut/ups.conf:ro" \
+  ghcr.io/sethdotfm/nut-snmp:latest \
+  sh -c "/usr/lib/nut/snmp-ups -a $UPS -x mibs=--list 2>&1"
+```
+
+That handling lives in `upsdrv_initups()`, after the config is parsed, so it
+needs a real `ups.conf` section to run at all — hence the mount. It prints the
+table and exits without touching the network.
+
+**A vendor MIB is not automatically the right one.** NUT's vendor MIBs are
+written against whatever hardware the contributor had, so a MIB that matches
+your `sysObjectID` may still map a fraction of what the device publishes. Before
+settling, check whether the device implements RFC 1628 (the standard UPS MIB) as
+well:
+
+```bash
+docker run --rm --network "$NET" alpine sh -c \
+  "apk add -q net-snmp-tools && snmpwalk -v2c -c $COMMUNITY $IP 1.3.6.1.2.1.33"
+```
+
+If that returns a populated tree, compare `mibs = ietf` against the vendor MIB
+and keep whichever publishes more. RFC 1628 has real three-phase tables, which
+most vendor MIBs in NUT do not.
+
+### Worked example: Schneider Electric Easy UPS 3S (Phoenixtec card)
+
+A 40 kVA `E3SUPS40KF` behind a card reporting `sysObjectID =
+.1.3.6.1.4.1.935.1.1.1`, firmware `3.7.DA807.APC.15`. Every step below is a
+thing that actually went wrong.
+
+- **SNMPv3 only.** The card's access-control table offered no v1/v2c rows at
+  all, so v1 and v2c queries were dropped without a reply — indistinguishable
+  from a firewall or a wrong community until you look at the web UI. Ping and
+  HTTPS answered fine throughout.
+- **`auto` did not match.** Enterprise 935 is Phoenixtec, and NUT's `xppc` MIB
+  registers `.1.3.6.1.4.1.935` — but `match_sysoid` walked the whole table
+  without matching `.1.3.6.1.4.1.935.1.1.1`. Pinning `mibs = xppc` worked
+  immediately via the classic testOID path.
+- **`xppc` was still the wrong choice.** It maps nine OIDs, all single-phase, so
+  `ups.load` stayed empty on a three-phase unit and there was no
+  `battery.runtime` at all.
+- **`mibs = ietf` was the answer.** The card implements RFC 1628 in full:
+  `battery.runtime`, `battery.voltage`, per-phase `input.L1-N.voltage` /
+  `output.L1.power.percent` across all three phases, `ups.firmware`,
+  `ups.test.result`.
+- **The card reports its serial in `upsIdentManufacturer`**, which NUT maps to
+  `ups.mfr`, so the dashboard showed a serial number where the vendor belongs.
+  `override.` in `ups.conf` fixes that without patching anything.
+
+```ini
+[sr1-1]
+    driver = snmp-ups
+    port = 172.17.50.121
+    snmp_version = v3
+    secLevel = authPriv
+    secName = nutmon
+    authProtocol = SHA
+    authPassword = <auth-password>
+    privProtocol = AES
+    privPassword = <priv-password>
+    mibs = ietf
+    pollfreq = 30
+    snmp_timeout = 3
+    snmp_retries = 5
+    desc = "Server Room 1 Primary UPS"
+
+    # This card reports its serial in upsIdentManufacturer, which NUT reads as
+    # ups.mfr. override. takes any NUT variable.
+    override.ups.mfr = "Schneider Electric"
+    override.ups.serial = "<serial>"
+```
+
+Note that under `ietf` a three-phase UPS publishes `output.L1.power.percent` and
+friends rather than a single `ups.load`, because there is no one load figure to
+report. Dashboards that expect `ups.load` will show nothing — see
+[Three-phase and Prometheus](#three-phase-and-prometheus).
 
 ## Quick start, one UPS, no config files
 
@@ -191,6 +314,26 @@ NUT_SERVERS:
 Adding the server through the PeaNUT UI writes the same file. Note that current
 PeaNUT versions no longer read `NUT_HOST`/`NUT_PORT`/`USERNAME`/`PASSWORD`
 environment variables — they are silently ignored.
+
+## Three-phase and Prometheus
+
+PeaNUT models a single-phase UPS: three KPI tiles and one voltage chart, keyed
+on `ups.load`. A three-phase device under `mibs = ietf` publishes
+`output.L1.power.percent` through `L3` and no `ups.load`, so the load tile stays
+empty while status, battery charge and runtime work normally.
+
+Rather than reshape that dashboard, send the per-phase data somewhere built for
+several series on one axis. [`examples/prometheus/`](examples/prometheus/) adds
+[`DRuggeri/nut_exporter`](https://github.com/DRuggeri/nut_exporter) to the
+stack: it connects to `upsd` as an ordinary client and turns every NUT variable
+into a metric, so `output.L1.power.percent` becomes
+`network_ups_tools_output_L1_power_percent{ups="sr1-1"}`.
+
+Both can run at once. They are just two NUT clients.
+
+That example also carries the Grafana half: recording rules that fold the
+per-phase metric names into one series with a `phase` label, and two provisioned
+dashboards — a KPI row that repeats over every UPS, and a per-UPS detail view.
 
 ## Development
 

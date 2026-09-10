@@ -1,0 +1,70 @@
+# Recording rules that fold nut_exporter's per-phase metrics into one series
+# per quantity, carrying the phase in a label.
+#
+# Add to your Prometheus config and reload:
+#
+#   rule_files:
+#     - /etc/prometheus/nut-rules.yml
+#
+# nut_exporter names a metric after the NUT variable, replacing "." and "-"
+# with "_", so a three-phase UPS under mibs = ietf produces three separate
+# metric names per quantity:
+#
+#   network_ups_tools_output_L1_power_percent
+#   network_ups_tools_output_L2_power_percent
+#   network_ups_tools_output_L3_power_percent
+#
+# Three names cannot be graphed as one query with a per-phase legend. These
+# rules turn them into nut:output_power_percent{phase="L1"} and friends, which
+# is what the Grafana dashboards in grafana/dashboards/ query.
+#
+# Each rule also has a single-phase fallback: if the UPS publishes the scalar
+# variable instead (ups.load, input.voltage, output.voltage), it is recorded as
+# phase="single" so the same dashboards still draw something. The "unless
+# on(ups)" guard keeps a UPS that reports both from being counted twice.
+#
+# Only line-to-neutral voltages are picked up. If your device reports
+# line-to-line as well (input.L1-L2.voltage), add a rule for it -- mixing ~120 V
+# and ~208 V on one axis is not what the dashboard panels are scaled for.
+
+groups:
+  - name: nut-per-phase
+    rules:
+      - record: nut:output_power_percent
+        expr: |
+          label_replace(
+            {__name__=~"network_ups_tools_output_L[123]_power_percent"},
+            "phase", "$1", "__name__", "network_ups_tools_output_(L[123])_power_percent"
+          )
+          or
+          (
+            label_replace(network_ups_tools_ups_load, "phase", "single", "", "")
+            unless on(ups)
+            {__name__=~"network_ups_tools_output_L[123]_power_percent"}
+          )
+
+      - record: nut:input_voltage
+        expr: |
+          label_replace(
+            {__name__=~"network_ups_tools_input_L[123](_N)?_voltage"},
+            "phase", "$1", "__name__", "network_ups_tools_input_(L[123])(?:_N)?_voltage"
+          )
+          or
+          (
+            label_replace(network_ups_tools_input_voltage, "phase", "single", "", "")
+            unless on(ups)
+            {__name__=~"network_ups_tools_input_L[123](_N)?_voltage"}
+          )
+
+      - record: nut:output_voltage
+        expr: |
+          label_replace(
+            {__name__=~"network_ups_tools_output_L[123](_N)?_voltage"},
+            "phase", "$1", "__name__", "network_ups_tools_output_(L[123])(?:_N)?_voltage"
+          )
+          or
+          (
+            label_replace(network_ups_tools_output_voltage, "phase", "single", "", "")
+            unless on(ups)
+            {__name__=~"network_ups_tools_output_L[123](_N)?_voltage"}
+          )

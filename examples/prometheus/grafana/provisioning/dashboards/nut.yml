@@ -1,0 +1,26 @@
+# Grafana dashboard provider. Mount this at
+# /etc/grafana/provisioning/dashboards/nut.yml and the dashboards themselves at
+# the path below; Grafana loads them on startup and re-reads them on the
+# interval, so the JSON files stay the source of truth.
+#
+# apiVersion: 1 here is the provisioning file format, not the dashboard schema.
+# The dashboards in ../../dashboards/ declare their own
+# apiVersion: dashboard.grafana.app/v2.
+
+apiVersion: 1
+
+providers:
+  - name: nut
+    orgId: 1
+    folder: UPS
+    type: file
+
+    # Edits made in the UI are discarded on the next reload. Flip to true if
+    # you would rather tune the dashboards in Grafana and export them back.
+    allowUiUpdates: false
+    disableDeletion: false
+    updateIntervalSeconds: 30
+
+    options:
+      path: /var/lib/grafana/dashboards/nut
+      foldersFromFilesStructure: false
