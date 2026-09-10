@@ -1,0 +1,68 @@
+# nut-snmp with a Prometheus exporter alongside.
+#
+# Use this when the UPS is three-phase, or when you want the per-variable
+# history that a NUT dashboard does not keep. nut_exporter is an ordinary NUT
+# client, so it can run next to PeaNUT rather than instead of it -- see
+# ../existing-peanut/ for the PeaNUT half.
+#
+# Before first use:
+#   1. cp .env.example .env                          and set NUT_PASSWORD
+#   2. cp config/ups.conf.example config/ups.conf    and fill in your UPS
+#   3. set networks.metrics.name to Prometheus's own network:
+#        docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' prometheus
+#   4. add the scrape job from prometheus-scrape.yml to your Prometheus config
+
+services:
+  nut-server:
+    image: ghcr.io/sethdotfm/nut-snmp:latest
+    container_name: nut-server
+    command: server
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - nut-run:/run/nut
+      - ./config/ups.conf:/etc/nut/ups.conf:ro
+    networks:
+      - internal
+
+  nut-sr1-1:
+    image: ghcr.io/sethdotfm/nut-snmp:latest
+    container_name: nut-sr1-1
+    command: ["driver", "sr1-1"]
+    restart: unless-stopped
+    volumes:
+      - nut-run:/run/nut
+      - ./config/ups.conf:/etc/nut/ups.conf:ro
+    networks:
+      - internal
+
+  # Reads every UPS upsd serves and exposes their variables as metrics.
+  # It speaks the NUT protocol, not SNMP, so it needs no access to the UPS
+  # itself -- only to upsd, on the internal network.
+  nut-exporter:
+    image: ghcr.io/druggeri/nut_exporter:latest
+    container_name: nut-exporter
+    restart: unless-stopped
+    command:
+      - --nut.server=nut-server
+      - --nut.username=nutmon
+      # The default is a short single-phase list (ups.load, input.voltage, ...)
+      # which drops every per-phase variable. Empty means "every numeric
+      # variable the UPS publishes".
+      - --nut.vars_enable=
+    environment:
+      # Must match NUT_PASSWORD in .env.
+      - NUT_EXPORTER_PASSWORD=change-me
+    networks:
+      - internal
+      - metrics
+
+volumes:
+  nut-run:
+
+networks:
+  internal:
+  metrics:
+    external: true
+    # Replace with Prometheus's actual network.
+    name: prometheus_default

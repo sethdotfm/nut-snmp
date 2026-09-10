@@ -13,6 +13,12 @@ set -eu
 STATEPATH="${STATEPATH:-/run/nut}"
 ROLE_MARKER=/run/nut-snmp.role
 
+# NUT resolves its state path from NUT_STATEPATH and only falls back to the
+# compiled-in default (/var/run/nut on Alpine, which is a symlink to /run/nut).
+# Exporting it here is what makes STATEPATH actually move the sockets; without
+# it we would create and chown a directory the drivers then ignore.
+export NUT_STATEPATH="$STATEPATH"
+
 log() { echo "nut-snmp: $*" >&2; }
 die() { log "error: $*"; exit 1; }
 
