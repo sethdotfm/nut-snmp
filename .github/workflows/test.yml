@@ -22,7 +22,7 @@ jobs:
 
       # Native amd64 only: these tests exercise the scripts, not the target
       # architecture, and the multi-arch build is covered by build.yml.
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
