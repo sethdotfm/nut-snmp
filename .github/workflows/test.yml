@@ -18,7 +18,7 @@ jobs:
           shellcheck --shell=sh entrypoint.sh healthcheck.sh lib/render-config.sh
           shellcheck --shell=bash tests/smoke.sh
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Native amd64 only: these tests exercise the scripts, not the target
       # architecture, and the multi-arch build is covered by build.yml.
